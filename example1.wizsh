@@ -1,0 +1,8 @@
+# wizard_shell script example
+# We are adding the people that should receive an email with the created cards
+add_user Ann ann@example.com
+add_user Bob bob@example.com
+add_user Carol carol@example.com
+add_user Dave dave@example.com
+# Now let us create the game and send the emails
+create
