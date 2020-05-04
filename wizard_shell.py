@@ -2,6 +2,7 @@
 import configparser
 import datetime
 import email.message
+import os.path
 import random
 import smtplib
 
@@ -35,7 +36,6 @@ class WizardCardDealer:
     def create_cards_sets(self, number_sets, cards_per_set):
         random.seed()
         selected_cards = random.sample(self.all_cards, number_sets*cards_per_set)
-        #print(selected_cards)
         sets = []
         for set_id in range(number_sets):
             start_index = set_id * cards_per_set
@@ -79,12 +79,14 @@ class WizardCommunication():
         self.playerManager = playerManager
         self.smtp = smtp
     
-    def generate_smtp(host, port, user, password):
+    @staticmethod
+    def generate_smtp(host: str, port: int, user: str, password: str) -> smtplib.SMTP:
         smtp = smtplib.SMTP_SSL(host=host, port=port)
         smtp.login(user=user, password=password)
         return smtp
 
-    def generate_rounds_string(rounds):
+    @staticmethod
+    def generate_rounds_string(rounds) -> str:
         outputstring = ''
         for round in rounds:
             outputstring = outputstring + 'Runde ' + str(len(round)) + ': '
@@ -94,8 +96,8 @@ class WizardCommunication():
             outputstring = outputstring + '\n'
         return outputstring
 
-    def create_game(self):
-        wizardCardDealer = WizardCardDealer(playerManager.player_names())
+    def create_game(self) -> None:
+        wizardCardDealer = WizardCardDealer(self.playerManager.player_names())
         game_id = str(datetime.datetime.now())
         card_mix = wizardCardDealer.get_card_mix()
         for player in card_mix:
@@ -105,30 +107,74 @@ class WizardCommunication():
             message_text = message_text +  WizardCommunication.generate_rounds_string(card_mix_for_player)
             email_address = self.playerManager.get_address(player)
             print("Sending email for player " + player)
-            self.send_email(email_address, message_text)
+            try: 
+                self.send_email(email_address, message_text)
+            except Exception as e:
+                print("Could not send E-Mail: " + str(e))
+                raise RuntimeError('Could not create game with all players. Stoping creation.')
 
-    def send_email(self, target_address, text, subject='Wizard Shell'):
+    def send_email(self, target_address: str, text: str, subject='Wizard Shell') -> None:
         msg = email.message.EmailMessage()
         msg.set_content(text)
         msg['Subject'] = subject
         msg['From'] = 'franz.hirschbeck@frahi.de'
         msg['To'] = target_address
         #print(msg)
-        smtp.send_message(msg)
+        self.smtp.send_message(msg)
 
+class WizardShell():
+    def __init__(self):
+        self.config = configparser.ConfigParser()
+        self.config.read('wizard_shell.ini')
+        self.smtp = WizardCommunication.generate_smtp( host = self.config['SMTP']['host'],
+                                                       port =  self.config['SMTP']['port'],
+                                                       user = self.config['SMTP']['user'],
+                                                       password = self.config['SMTP']['password'] )
+        self.playerManager = WizardPlayerManager()
+        self.wizardCommunication = WizardCommunication(self.playerManager, self.smtp)
 
-config = configparser.ConfigParser()
-config.read('wizard_shell.ini')
+    def run_shell(self) -> None:
+        while True:
+            command = input('>> ')
+            self.process_line(command)
 
-smtp = WizardCommunication.generate_smtp( host = config['SMTP']['host'],
-                                          port =  config['SMTP']['port'],
-                                          user = config['SMTP']['user'],
-                                          password = config['SMTP']['password'] )
+    def process_line(self, command: str) -> None:
+        try:
+            command = command.lstrip(' ')
+            if command == 'exit':
+                quit()
+            if command.startswith('#'):
+                return
+            if command.startswith('add_user'):
+                [command, username, useraddress] = command.split(' ')
+                print('adding user ' + username + ' with e-mail ' + useraddress)
+                self.playerManager.add_player(username, useraddress)
+                return
+            if command.startswith('create'):
+                self.wizardCommunication.create_game()
+                return
+            if command.startswith('source'):
+                [command, filename] = command.split(' ')
+                self.source_file(filename)
+                return
+            raise RuntimeError('Command unknown')
+        except Exception as e:
+            print('Could not process command: ' + command)
+            print('Exception: ' + str(e))
 
-playerManager = WizardPlayerManager()
-playerManager.add_player('Franz', 'info@frahi.de')
-playerManager.add_player('Franz2', 'info@frahi.de')
-playerManager.add_player('Franz3', 'info@frahi.de')
+    @staticmethod
+    def find_source_file(filename):
+        if os.path.exists(filename):
+            return filename
+        filename_with_extension = filename + '.wizsh'
+        if os.path.exists(filename_with_extension):
+            return filename_with_extension
+        raise OSError(strerror='Could not find file: ' + filename)
 
-wizardCommunication = WizardCommunication(playerManager, smtp)
-wizardCommunication.create_game()
+    def source_file(self,filename):
+        with open(WizardShell.find_source_file(filename), 'r') as file:
+            for line in file:
+                self.process_line(line)
+
+shell = WizardShell()
+shell.run_shell()
